@@ -1,0 +1,786 @@
+----------------------------------------------
+title: "EI Analysis for manuscript"
+author: "Qian Li"
+date: "2024-06-09"
+update: "2026-04-16"
+----------------------------------------------
+
+pacman::p_load(readxl,dplyr,corrplot,reshape2,psych,tidyverse,tableone,gtsummary,huxtable,
+               ggpubr,crosstable,survey,wesanderson,xtable,Hmisc,glue,ltm,psych,gridExtra)
+
+setwd("C:/Users/ql2524/OneDrive - Columbia University Irving Medical Center/EI Validation Study")
+
+## Loading Data
+#mydt <- read.csv("EI-Scale-Datasets/EI-data-Nov-27-2024.csv")
+mydt <- read.csv("EI-Scale-Datasets/EI-data-Apr-16-2026.csv")
+
+########################################################################################
+# Sociodemographics     #
+########################################################################################
+mydt %>%  
+  dplyr::select(Region) %>%
+  tbl_summary(missing = "ifany") 
+
+# Table - Demographics (no weights) #
+tbl1= mydt %>%  
+  dplyr::select(Age.num,Age,Gender,Hispanic,Race.new,
+         PrimaryResidence,HouseholdSize,House.composition,HousingIncome) %>%
+  tbl_summary(missing = "ifany") %>%
+  modify_header(label = "**Variables**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+# Table - Demographics (with and without weights) - Supplemental Table #
+mydt_design <- svydesign(
+  data = mydt, 
+  weights = ~weight, 
+  id = ~record,
+  na.rm = TRUE
+)
+
+tbl2 = mydt_design %>%
+  tbl_svysummary(include = c(Age.num,Age,Gender,Hispanic,Race.new,
+                             PrimaryResidence,HouseholdSize,House.composition,HousingIncome)) %>%
+  modify_header(label = "**Variables**") %>% 
+  bold_labels()%>%
+  as_hux_table()
+
+########################################################################################
+# Household energy source and payment #
+########################################################################################
+mydt %>% tbl_summary(include = "Paid")
+
+mydt %>%
+  dplyr::select(Electricity,Gas,Oil,Wood,Paid) %>%
+  tbl_summary(by="Paid",missing = "ifany",type = all_dichotomous() ~ "categorical") %>%
+  add_overall()
+
+# Electricity and Gas #
+mydt = mydt %>%
+  mutate(EleGas=case_when(Electricity%in%1&Gas%in%1~"E+G",
+                          Paid%in%"Yes"~"Others"),
+         Ele.only = case_when(Electricity==1&Gas==0&Oil==0&Wood==0~1,
+                              Paid%in%"Yes"~0))
+mydt %>% tbl_summary(include = "EleGas")
+
+tb3.dt = mydt %>%
+  dplyr::rename(`Housing Quality` = Phy_com,
+                `Outage/Interruption` = Outage_com_1,
+                `Extremely Cold` = Cold_1,
+                `Extremely Hot` = Hot_1,
+                `Reduce Energy Consumption` = CEP1,
+                `Kitchen Oven for Warmth` = CEP2,
+                `Activity to Certain Room` = CEP3,
+                `Left Home` = CEP4,
+                `Reduced Basic Expense` = CEP5,
+                `Move to New Place` = CEP6,
+                `Unable to Move New Place` = CEP7,
+                `Outside Help Pay Utility` = CEP8) 
+
+tbl3  = tb3.dt %>%
+  dplyr::select(Paid,`Housing Quality`,`Outage/Interruption`,`Extremely Cold`,
+                `Extremely Hot`,`Reduce Energy Consumption`,`Kitchen Oven for Warmth`,
+                `Activity to Certain Room`,`Left Home`,`Reduced Basic Expense`,
+                `Move to New Place`,`Unable to Move New Place` ,`Outside Help Pay Utility`) %>%
+  tbl_summary(by=Paid, missing = "ifany") %>%
+  add_overall() %>%
+  add_p() %>%
+  modify_header(label = "**Variable**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+
+########################################################################################
+# Figure 1. Correlations among EI items     #
+########################################################################################
+names(mydt)
+
+# same direction for economic/physical dimensions with coping strategies
+table(mydt$CEP1,mydt$Paid)#1=yes,2=no
+
+# Remove "CEP7" (unable to move) #
+
+t1 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select("Pay_com_1_score","Debt_com_1_score","Shut_com_1_score","Phy_com_score",
+                "Outage_com_1_score","Cold_1_score","Hot_1_score","CEP1",
+                "CEP2","CEP3","CEP4","CEP5","CEP6","CEP8") %>%
+  dplyr::rename(`Difficulty Paying` = Pay_com_1_score,
+                `Utilty Debt` = Debt_com_1_score,
+                `Utility Shut-off` = Shut_com_1_score,
+                `Housing Quality` = Phy_com_score,
+                `Outage/Interruption` = Outage_com_1_score,
+                `Extremely Cold` = Cold_1_score,
+                `Extremely Hot` = Hot_1_score) %>%
+  mutate(`Coping1` = case_when(CEP1==2~1,CEP1==1~2),
+         `Coping2` = case_when(CEP2==2~1,CEP2==1~2),
+         `Coping3` = case_when(CEP3==2~1,CEP3==1~2),
+         `Coping4` = case_when(CEP4==2~1,CEP4==1~2),
+         `Coping5` = case_when(CEP5==2~1,CEP5==1~2),
+         `Coping6` = case_when(CEP6==2~1,CEP6==1~2),
+         `Coping8` = case_when(CEP8==2~1,CEP8==1~2)) %>%
+  dplyr::select(-c("CEP1","CEP2","CEP3","CEP4","CEP5","CEP6","CEP8")) %>%
+  drop_na()
+
+table(mydt$Pay_com_1_score)#1=secure 2=mediate 3=high
+table(t1$Coping1)#1=no strategy (secure),2=yes
+
+res1 <- cor.mtest(t1, conf.level = .95)
+M = cor(t1,method = 'spearman')
+corrplot(M, p.mat = res1$p, sig.level = .05, order = 'hclust', 
+         insig='blank',tl.cex =1, addrect = 5)
+
+# Perform hierarchical clustering
+tt=t(t1)
+hi_cl <- hclust(dist(tt))
+# Plot the dendrogram
+plot(hi_cl)
+
+#EFA Diagnostics---- 
+#KMO
+KMO(t1)#Overall MSA =  0.92
+#Barlette
+cortest.bartlett(t1)
+#positive determinant
+det(cor(t1))
+#parallel analysis
+fa.parallel(t1, fa="fa")
+#EFA
+fit1 <- factanal(t1, 3, rotation="promax") 
+print(fit1, digits=2, cutoff=0.3, sort=TRUE)
+loads <- fit1$loadings
+fa.diagram(loads)
+
+# different direction for economic/physical dimensions with coping strategies
+t2 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select("Pay_com_1_score","Debt_com_1_score","Shut_com_1_score","Phy_com_score",
+                "Outage_com_1_score","Cold_1_score","Hot_1_score","CEP1",
+                "CEP2","CEP3","CEP4","CEP5","CEP6","CEP8") %>%
+  dplyr::rename(`Difficulty Paying` = Pay_com_1_score,
+                `Debt` = Debt_com_1_score,
+                `Shut-off` = Shut_com_1_score,
+                `Housing Quality` = Phy_com_score,
+                `Outage/Interruption` = Outage_com_1_score,
+                `Extremely Cold` = Cold_1_score,
+                `Extremely Hot` = Hot_1_score,
+                `Conserve` = CEP1,
+                `Oven` = CEP2,
+                `Restrict` = CEP3,
+                `Leave` = CEP4,
+                `Trade-off` = CEP5,
+                `Move` = CEP6,
+                `Assistance` = CEP8) %>%
+  drop_na()
+
+table(mydt$Pay_com_1_score)#1=secure 2=mediate 3=high
+table(mydt$CEP1,mydt$Paid)#1=yes,20=no
+table(t2$Coping1)#1=yes (insecure),2=no strategy (secure)
+
+res1 <- cor.mtest(t2, conf.level = .95)
+M = cor(t2,method = 'spearman')
+corrplot(M, p.mat = res1$p, sig.level = .05, order = 'hclust', 
+         insig='blank',tl.cex =1, addrect = 4)
+
+# Perform hierarchical clustering
+tt=t(t2)
+hi_cl <- hclust(dist(tt))
+# Plot the dendrogram
+plot(hi_cl)
+
+#EFA Diagnostics---- 
+#KMO
+KMO(t2)#Overall MSA =  0.92
+#Barlette
+cortest.bartlett(t2)
+#positive determinant
+det(cor(t2))
+#parallel analysis
+fa.parallel(t2, fa="fa")
+#EFA
+fit2 <- factanal(t2, 3, rotation="promax") 
+print(fit2, digits=2, cutoff=0.3, sort=TRUE)
+loads <- fit2$loadings
+fa.diagram(loads)
+
+##########################################################################
+# median of coping strategies by components
+##########################################################################
+a = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(Pay_com_1,Debt_com_1,Shut_com_1,
+         Phy_com,Outage_com_1,Hot_1,Cold_1,
+         Eco_dimension_1,Phy_dimension_1,
+         CEP_count)
+
+melted2 <- a %>% gather(variable, value, -`CEP_count`) %>%
+  drop_na()
+
+Coping_plot1 = melted2 %>%
+  mutate(Grp=case_when(value%in%"1.Security"~"None",
+                       value%in%"2.Moderate"~"Some",
+                       value%in%"3.Severe"~"Substantial")) %>%
+  mutate(New.var=case_when(variable%in%"Pay_com_1"~"A1. Difficulty Paying",
+                           variable%in%"Debt_com_1"~"A2. Accruing Debt",
+                           variable%in%"Shut_com_1"~"A3. Shutoff")) %>%
+  drop_na()
+
+P1 = ggplot(Coping_plot1, aes(x = Grp, y = `CEP_count`,col=Grp,fill=Grp)) +
+  geom_boxplot(width = .55,outliers = FALSE) +
+  facet_wrap(~ New.var,ncol=3) + xlab("")+
+  ylab("Number of Coping Strategies") +
+  scale_colour_manual(values=c("darkgreen","blue","red")) +
+  scale_fill_manual(values=c("lightgreen","lightblue","pink")) +
+  theme_pubclean()+
+  theme(legend.position = "none",
+        strip.text = element_text(size = 15, face = "bold"),
+        axis.text =element_text(size=13),
+        axis.title.y = element_text(size = 12,face = "bold")) 
+  
+Coping_plot2 = melted2 %>%
+  mutate(Grp=case_when(value%in%"1.Security"~"None",
+                       value%in%"2.Moderate"~"Some",
+                       value%in%"3.Severe"~"Substantial",
+                       value%in%"A.Never"~"None",
+                       value%in%"B.<=3d"~"Some",
+                       value%in%"C.>3d"~"Substantial")) %>%
+  mutate(New.var=case_when(variable%in%"Phy_com"~"B1. Housing Quality",
+                           variable%in%"Outage_com_1"~"B2. Outage/Interruption",
+                           variable%in%"Cold_1"~"B3. Extreme Cold Indoor",
+                           variable%in%"Hot_1"~"B4. Extreme Hot Indoor")) %>%
+  drop_na()
+
+P2 = ggplot(Coping_plot2, aes(x = Grp, y = `CEP_count`,col=Grp,fill=Grp)) +
+  geom_boxplot(width = .55,outliers = FALSE) +
+  facet_wrap(~ New.var,ncol=4) + xlab("")+
+  ylab("Number of Coping Strategies") +
+  scale_colour_manual(values=c("darkgreen","blue","red")) +
+  scale_fill_manual(values=c("lightgreen","lightblue","pink")) +
+  theme_pubclean()+
+  theme(legend.position = "none",
+        strip.text = element_text(size = 15, face = "bold"),
+        axis.text =element_text(size=13),
+        axis.title.y = element_text(size = 12,face = "bold")) 
+
+vplayout <- function(x, y) viewport(layout.pos.row = x, layout.pos.col = y)
+tiff("Results/Fig3.tiff", units="in",width=15, height = 10, res = 200)
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 1)))
+print(P1, vp = vplayout(1, 1))
+print(P2, vp = vplayout(2, 1))
+dev.off()
+
+
+b = melted2 %>%
+  group_by(variable, value) %>%
+  dplyr::summarize(Median = median(`CEP_count`, na.rm=TRUE),
+                   Min = min(`CEP_count`, na.rm=TRUE),
+                   Max = max(`CEP_count`, na.rm=TRUE))
+
+########################################################################################
+# Correlations among EI_1_score and validated measures     #
+########################################################################################
+# Perceived Stress Scale (PSS)  #
+mydt = mydt %>%
+  dplyr::mutate(PSS1.new=dplyr::recode(PSSPSS1,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4),
+         PSS2.new=dplyr::recode(PSSPSS2,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4),
+         PSS3.new=dplyr::recode(PSSPSS3,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4),
+         PSS4.new=dplyr::recode(PSSPSS4,"1" = 4, "2" = 3, "3" = 2, "4" = 1, "5" = 0),
+         PSS5.new=dplyr::recode(PSSPSS5,"1" = 4, "2" = 3, "3" = 2, "4" = 1, "5" = 0),
+         PSS6.new=dplyr::recode(PSSPSS6,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4),
+         PSS7.new=dplyr::recode(PSSPSS7,"1" = 4, "2" = 3, "3" = 2, "4" = 1, "5" = 0),
+         PSS8.new=dplyr::recode(PSSPSS8,"1" = 4, "2" = 3, "3" = 2, "4" = 1, "5" = 0),
+         PSS9.new=dplyr::recode(PSSPSS9,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4),
+         PSS10.new=dplyr::recode(PSSPSS10,"1" = 0, "2" = 1, "3" = 2, "4" = 3, "5" = 4)) %>%
+  rowwise() %>%
+  mutate(PSS=sum(c_across(PSS1.new:PSS10.new)))
+
+# 0-13 considered low stress; 14-26 moderate stress; 27-40 high perceived stress #
+summary(mydt$PSS)
+mydt = mydt %>%
+  mutate(PSS.ca = case_when(PSS <=13 ~ "1.LowStress",
+                            PSS <=26 ~ "2.ModerateStress",
+                            PSS >26 ~ "3.HighStress"),
+         PSS.num = case_when(PSS <=13 ~ 1,
+                             PSS <=26 ~ 2,
+                             PSS >26 ~ 3))
+
+# correlations among EI and health #
+dt1 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(EI_1_score,PSS.num,SF1,SF2,SF3,PSQI1,PSQI2a,PSQI2b,
+                FoodQ1,FoodQ2,FoodQ3,FoodQ4, record,weight)
+
+dt1_design <- svydesign(
+  data = dt1, 
+  weights = ~weight, 
+  id = ~record,
+  na.rm = TRUE
+)
+
+tbl4 = dt1_design %>%
+  tbl_svysummary(by = "EI_1_score", 
+                 include = c(PSS.num,SF1,SF2,SF3,PSQI1,PSQI2a,PSQI2b,FoodQ1,FoodQ2,FoodQ3,FoodQ4)) %>%
+  add_p() %>%
+  modify_header(label = "**Weighted**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+# correlations among EI and health #
+dt1 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+    dplyr::select(EI_1_score,PSS.num,SF1,SF2,SF3,PSQI1,PSQI2a,PSQI2b)
+M1 = cor(dt1, method = c("kendall"))
+testRes1 = cor.mtest(dt1, conf.level = 0.95)
+
+dt2 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(EI_1_score,FoodQ1,FoodQ2,FoodQ3,FoodQ4) %>%
+  drop_na()
+M2 = cor(dt2, method = c("kendall"))
+testRes2 = cor.mtest(dt2, conf.level = 0.95)
+
+cor.res  = data.frame(VAR=c(row.names(M1),row.names(M2)),
+                      Coefficient=c(M1[,1],M2[,1]), 
+                      P=c(testRes1$p[,"EI_1_score"],testRes2$p[,"EI_1_score"]))
+
+########################################################################################
+# water insecurity   #
+########################################################################################
+mydt = mydt %>%
+  mutate(water_score=case_when(
+    (Pay_water_1%in%"C.>4mon"&Debt_water_1%in%"C.>$100"&Shut_water_1%in%"C.>12h"&Outage_water_1%in%"C.>12h")~"4.Extremely",
+    (Pay_water_1%in%"C.>4mon"|Debt_water_1%in%"C.>$100"|Shut_water_1%in%"C.>12h"|Outage_water_1%in%"C.>12h")~"3.Severe",
+    (Pay_water_1%in%"A.Never"&Debt_water_1%in%"A.Never"&Shut_water_1%in%"A.Never"&Outage_water_1%in%"A.Never")~"1.Security",
+    (!Pay_water_1%in%NA|!Debt_water_1%in%NA|!Shut_water_1%in%NA|!Outage_water_1%in%NA)~"2.Moderate"))
+         
+tbl5 = mydt %>% 
+  filter(Paid%in%"Yes"&Water%in%"Yes") %>%
+  tbl_summary(include = c(Pay_water_1,Debt_water_1,Shut_water_1,Outage_water_1,water_score),
+              by=c("EI_1"))%>%
+  add_p()%>%
+  as_hux_table()
+
+########################################################################################
+# Correlations among EI_1_score and health questions   #
+########################################################################################
+tbl6 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  tbl_summary(by = "EI_1_score", type = all_dichotomous() ~ "categorical",
+              include = c(Sleeping,Mental,Respiratory,Device,Food,
+                          Hypertension,HeartDisease,Diabetes,Cancer,Obesity,Asthma)) %>%
+  add_p() %>%
+  add_overall() %>%
+  modify_header(label = "**Weighted**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+
+############################################################################
+# Reliability - cronbach's alpha
+######################################################################
+a1 = mydt %>%
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(Pay_ele_1,Pay_gas_1,
+                Debt_ele_1,Debt_gas_1,
+                Shut_ele_1,Shut_gas_1) %>%
+  drop_na()
+cronbach.alpha(a1)
+
+a2 = mydt %>% 
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(Physical,Maintance,Temperature,Service) %>%
+  drop_na()
+cronbach.alpha(a2)
+
+a3 = mydt %>% 
+  filter(Paid%in%"Yes") %>%
+  dplyr::select(CEP1,CEP2,CEP3,CEP4,CEP5,CEP6,CEP7) %>%
+  drop_na()
+cronbach.alpha(a3)
+
+
+########################################################################################
+# Energy insecurity by Sociodemographics     #
+########################################################################################
+table(mydt$Race.Ethnicity)
+mydt = mydt %>%
+  mutate(Race.Ethnicity.new = case_when(Race.Ethnicity%in%c("5.Non-Hispanic Black")~"6.Non-Hispanic Others",
+                                        TRUE~Race.Ethnicity))
+
+# Energy Literacy #
+mydt = mydt %>%
+  mutate(Literacy=case_when(EL1%in%"2"&EL2%in%"1"&EL3<3~"Correct",
+                            TRUE~"Wrong"))
+
+dt = mydt %>% filter(Paid%in%"Yes")
+
+
+dt_design <- svydesign(
+  data = dt, 
+  weights = ~weight, 
+  id = ~record,
+  na.rm = TRUE
+)
+
+dt_design %>%
+  tbl_svysummary(statistic = list(all_categorical()~"{p}"),
+                 digits = list(all_categorical()~c(1)),
+                 include = c(EI_1_score))
+
+dt_design %>%
+  tbl_svysummary(include = c("EI_1_score"))
+                 
+tbl7 = dt_design %>%
+  tbl_svysummary(by = "EI_1_score", statistic = list(all_categorical()~"{p}"),
+                 digits = list(all_categorical()~c(1)),
+                 include = c(HH4,Age,Gender,Race.Ethnicity.new,
+                             House.composition,PrimaryResidence,
+                             HousingIncome,Ele.only,Gas,Oil,Wood,
+                             HomeType,SizeBedroom.num,Bedroom.ca,Literacy),percent = "row") %>%
+  add_p() %>%
+  modify_header(label = "**Weighted**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+# New bedrooms variables #
+dt = dt %>%
+  mutate(Bedroom.new=case_when(
+    HH1==1&HH9==0~"1.Studio with 1ppl",
+    HH9==0~"2.Studio with >1ppl",
+    HH1<=3&HH9==1~"3.1BR with <=3ppl",
+    HH9==1~"4.1BR with >3ppl",
+    HH1<=4&HH9==2~"5.2BR with <=4 ppl",
+    HH9==2~"6.2BR with >4ppl",
+    HH1<=6&HH9==3~"7.3BR with <=6 ppl",
+    HH9==3~"8.3BR with >6ppl",
+    HH9>3~"9.>4BR"
+  ))
+
+tbl8 = dt_design %>%
+  tbl_svysummary(by = "EI_1_score", statistic = list(all_categorical()~"{p}"),
+                 digits = list(all_categorical()~c(1)),
+                 include = c(Bedroom.new),percent = "row") %>%
+  add_p() %>%
+  modify_header(label = "**Weighted**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+########################################
+# Title: RECS and National Survey analysis
+# Date: "2026-04-08"
+# Author: Qian Li
+# Updated Date: "2026-04-27"
+#######################################
+
+library(dplyr)
+library(stringr)
+library(usmap)
+library(readr)
+library(tidyverse)
+library(gridExtra)
+library(gtsummary)
+library(survey)
+
+setwd("C:/Users/ql2524/OneDrive - Columbia University Irving Medical Center")
+
+## Loading Data
+Energy <- read.csv("EI +Cancer/Data/RECS/recs2020_public_v7_raw.csv")
+
+# Bill Paying #
+Energy %>% tbl_summary(include = c(ELPAY,NGPAY,LPGPAY,FOPAY))
+dt1 = Energy %>%
+  mutate(Paid=case_when(ELPAY==1~"Yes",
+                        NGPAY==1~"Yes",
+                        LPGPAY==1~"Yes",
+                        FOPAY==1~"Yes",
+                        TRUE~"No")) %>%
+  select(DOEID,Paid)
+
+# Geography #
+Energy %>% tbl_summary(include = c(REGIONC,state_name,state_postal))
+dt2 = Energy %>% select(DOEID,REGIONC,state_name,state_postal,NWEIGHT)
+
+# Household Characteristics #
+Energy %>% tbl_summary(include = c(HHSEX,HHAGE,HOUSEHOLDER_RACE,SDESCENT))
+dt3 = Energy %>% select(DOEID,HHSEX,HHAGE,HOUSEHOLDER_RACE,SDESCENT)
+
+# Your home #
+Energy %>% tbl_summary(include = c(TYPEHUQ,KOWNRENT))
+dt4 = Energy %>% select(DOEID,KOWNRENT)
+
+# Create energy insecurity #
+# SCALEE: receiving a disconnect or delivery stop notice
+# NOHEATEL: Unable to use heating equipment in the past year because could not afford electricity and it was disconnected
+# NOACEL: Unable to use air conditioning equipment in the past year because could not afford electricity and it was disconnected
+# POWEROUT: Any power outages for at least 24 hours in the past year
+# SCALEG: Frequency of keeping home at unhealthy temperature
+# SCALEB: Frequency of reducing or forgoing basic necessities due to home energy bill
+# ENERGYASST20: Received home energy assistance in 2020
+# NOHEATBROKE: Unable to use heating equipment in the past year because equipment was broken and could not afford repair or replacement
+# NOACBROKE: Unable to use air conditioning equipment in the past year because equipment was broken and could not afford repair or replacement
+# NOHEATNG: Unable to use heating equipment in the past year because could not afford natural gas and it was disconnected
+# NOHEATBULK: Unable to use heating equipment in the past year because could not afford bulk fuel delivery
+
+Energy %>% tbl_summary(include = c(SCALEE,NOHEATBROKE,NOACBROKE,NOHEATNG,NOHEATBULK,
+                                   SCALEG,SCALEB,NOHEATEL,NOACEL,POWEROUT,ENERGYASST20),
+                       type = list(all_categorical()~"categorical"))
+# Vector of EI variables without power outage #
+EI_vars_9 <- c("SCALEE","NOHEATEL","NOACEL","NOHEATNG","NOHEATBULK",
+               "SCALEG","NOHEATBROKE","NOACBROKE",
+               "SCALEB"
+)
+
+dt5 <- Energy %>%
+  mutate(
+    EI_any_9 = as.integer(rowSums(select(., all_of(EI_vars_9)) > 0) > 0),
+    EI_all_9 = rowSums(select(., all_of(EI_vars_9)) > 0)
+  ) %>%
+  select(DOEID,SCALEE,NOHEATEL,NOHEATNG,NOHEATBULK,NOACEL,
+         NOHEATBROKE,NOACBROKE,NOHEATDAYS,NOACDAYS,
+         POWEROUT,SCALEB,ENERGYASST20,NOACHELP,
+         EI_any_9,EI_all_9)
+
+# Health consequence #
+dt6 <- Energy %>%
+  select(DOEID,SCALEG,COLDMA,HOTMA)
+
+# Merge data #
+dt_recs <- list(dt1, dt2, dt3, dt4, dt5, dt6) %>%
+  reduce(full_join, by = "DOEID")
+
+names(dt_recs)
+
+dt_recs_demo = dt_recs %>%
+  mutate(Dataset="RECS",
+         ID=DOEID,
+         Weight=NWEIGHT,
+         Age=HHAGE,
+         Region=REGIONC,
+         Sex=case_when(HHSEX==1 ~ "Female",
+                       HHSEX==2 ~ "Male"),
+         Hispanic=case_when(SDESCENT==1 ~ "Yes",
+                            SDESCENT==0 ~ "No"),
+         Ownership=case_when(KOWNRENT==1 ~ "Own",
+                             KOWNRENT==2 ~ "Rent")) %>%
+  select(Dataset,ID,Weight,Age,Region,Sex,Hispanic,Ownership,Paid)
+
+dt_recs_select = dt_recs %>%
+  filter(Paid%in%"Yes") %>%
+  mutate(Dataset="RECS",
+         ID=DOEID,
+         Weight=NWEIGHT,
+         Notice_Disconnection = SCALEE,
+         Disconnect=case_when(NOHEATEL==1 ~"Yes",
+                              NOHEATNG==1 ~"Yes",
+                              NOHEATBULK==1 ~"Yes",
+                              NOACEL==1 ~"Yes",
+                              TRUE ~"No"),
+         Physical_condition = case_when(NOHEATBROKE==1 ~ "Yes",
+                                        NOACBROKE==1 ~ "Yes",
+                                        TRUE ~"No"),
+         Extremely_Hot = case_when(NOHEATDAYS>3~"3.>3days",
+                                   NOHEATDAYS>0~"2.1-3days",
+                                   SCALEG==0 ~"1.Never"),
+         Extremely_Cold = case_when(NOACDAYS>3~"3.>3days",
+                                    NOACDAYS>0~"2.1-3days",
+                                    SCALEG==0 ~"1.Never"),
+         Health_Outcome=case_when(
+           COLDMA==1~"Yes",
+           HOTMA==1~"Yes",
+           TRUE~"No"),
+         Powerout=case_when(POWEROUT==0 ~ "No",
+                            POWEROUT==1 ~ "Yes"),
+         Coping_dimension =case_when(
+           ENERGYASST20==1 ~ "2.Insecure",
+           SCALEB == 1 ~ "2.Insecure",
+           NOACHELP == 1 ~ "2.Insecure",
+           TRUE ~ "1.secure"),
+         EI=case_when(EI_any_9==0 ~ "Secure",
+                      EI_any_9==1 ~ "Insecure")) %>%
+  mutate(Eco_dimension = case_when(
+    (Notice_Disconnection%in%"0" & Disconnect%in%"No") ~"1.secure",
+    (Notice_Disconnection%in%"1" & Disconnect%in%"Yes")~"3.Severe",
+    TRUE~"2.Moderate"),
+    Phy_dimension = case_when(
+      (Physical_condition%in%"No" & Powerout%in%"No" & Extremely_Cold%in%"1.Never"
+       & Extremely_Hot%in%"1.Never" & SCALEG%in%"0") ~"1.secure",
+      (Physical_condition%in%"Yes" & Powerout%in%"Yes" & 
+         (Extremely_Cold%in%"3.>3days"| Extremely_Hot%in%"3.>3days" | SCALEG%in%"1")) ~"3.Severe",
+      TRUE~"2.Moderate"),
+    EI_Overall = case_when(
+      Eco_dimension%in%"1.secure"&Phy_dimension%in%"1.secure"&Coping_dimension%in%"1.secure"~"1.secure",
+      Eco_dimension%in%"3.Severe"&Phy_dimension%in%"3.Severe"&Coping_dimension%in%"2.Insecure"~"4.Extremely",
+      Eco_dimension%in%"3.Severe"|Phy_dimension%in%"3.Severe"|Coping_dimension%in%"2.Insecure"~"3.Severe",
+      TRUE~"2.Moderate"
+    )) %>%
+  select(Dataset,ID,Weight,
+         Notice_Disconnection,Disconnect,Physical_condition,Powerout,Extremely_Cold,Extremely_Hot,
+         SCALEG,
+         Eco_dimension,Phy_dimension,Coping_dimension,EI_Overall,Health_Outcome
+         )
+
+# RECS energy security table #
+design <- svydesign(
+  ids = ~1,
+  weights = ~Weight,
+  data = dt_recs_select
+)
+
+design %>%
+  tbl_svysummary(
+    include = c(Notice_Disconnection,Disconnect,Physical_condition,Powerout,Extremely_Cold,Extremely_Hot,
+                SCALEG,
+                Eco_dimension,Phy_dimension,Coping_dimension,EI_Overall,Health_Outcome),
+    type = all_categorical() ~ "categorical",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{p}%"
+    ),
+    missing = "no"   # <- this hides missing/unknown in the table
+  ) 
+
+
+##########################################################################################
+# National Study #
+# Nation <- read.csv("EI Validation Study/Manuscript/Nature Energy/National_Surveys.csv")
+
+Nation <- read.csv("EI Validation Study/EI-Scale-Datasets/EI-data-Apr-16-2026.csv")
+
+dt_Nation_demo = Nation %>%
+  mutate(Age=Age.num,
+         Dataset="E2H2",
+         ID=record,
+         Weight=weight,
+         Sex=Gender,
+         Hispanic=case_when(Hispanic=="2.Yes" ~ "Yes",
+                           Hispanic== "1.No" ~ "No"),
+         Ownership=case_when(PrimaryResidence=="Own Home" ~ "Own",
+                             PrimaryResidence=="Rent" ~ "Rent")) %>%
+  select(Dataset,ID,Weight,Age,Region,Sex,Hispanic,Ownership,Paid)
+
+# Table 1: Demographics #
+dt_table1 <- bind_rows(dt_recs_demo, dt_Nation_demo)
+dt_table1 <- dt_table1 %>%
+  mutate(across(where(is.character), toupper))
+
+design <- svydesign(
+  ids = ~1,
+  weights = ~Weight,
+  data = dt_table1
+)
+
+design %>%
+  tbl_svysummary(
+    include = c(Region, Age, Sex, Hispanic, Ownership,Paid),
+    by = Dataset,
+    type = all_dichotomous() ~ "categorical",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{p}%"
+    ),
+    missing = "no"   # <- this hides missing/unknown in the table
+  ) %>%
+  add_p() 
+
+# Health variables #
+# Combine extremely hot or cold #
+Nation %>%
+  filter(Paid%in%"Yes") %>%
+  tbl_summary(include = c(Sleeping,Mental,Respiratory,Device,Food,Cold_1,Hot_1),
+              type = all_dichotomous() ~ "categorical") %>%
+  add_p() %>%
+  add_overall() %>%
+  modify_header(label = "**Weighted**") %>% 
+  bold_labels() %>%
+  as_hux_table()
+
+Health_vars <- c("Sleeping","Mental","Respiratory","Device","Food")
+temp_vars <- c("Cold_1", "Hot_1")
+
+dt_Nation_select <- Nation %>%
+  mutate(
+    Health_Outcome = case_when(
+      if_any(all_of(Health_vars), ~ . == 4) ~ "4.Always",
+      if_any(all_of(Health_vars), ~ . == 3) ~ "3.Sometimes",
+      if_any(all_of(Health_vars), ~ . == 2) ~ "2.Rarely",
+      if_any(all_of(Health_vars), ~ . == 1) ~ "1.Never",
+      TRUE ~ NA_character_
+    )) %>%
+  mutate(
+    across(all_of(temp_vars),
+           ~ factor(., levels = c("A.Never", "B.<=3d", "C.>3d"), ordered = TRUE)),
+    Extreme_Hot_Cold = do.call(pmax, c(across(all_of(temp_vars)), na.rm = TRUE)) %>% 
+      as.character()
+  ) 
+
+# Energy Insecurity Indicators #
+dt_Nation_select = dt_Nation_select %>%
+  filter(Paid%in%"Yes")  %>%
+  mutate(
+    Dataset="E2H2",
+    ID=record,
+    Weight=weight,
+    Notice_Disconnection=Pay_com_1_score,
+    Disconnect=Shut_com_1_score,
+    Physical_condition=Phy_com_score,
+    Powerout=Outage_com_1,
+    Extremely_Cold=Cold_1,
+    Extremely_Hot=Hot_1,
+    Eco_dimension=Eco_dimension_1,
+    Phy_dimension=Phy_dimension_1,
+    Coping_dimension=Coping_com,
+    EI_Overall = EI_1) %>%
+  select(Dataset,ID,Weight,
+         Notice_Disconnection,Disconnect,Physical_condition,Powerout,Extremely_Cold,Extremely_Hot,
+         Extreme_Hot_Cold,
+         Eco_dimension,Phy_dimension,Coping_dimension,EI_Overall,Health_Outcome)
+
+# E2H2 national table #
+design <- svydesign(
+  ids = ~1,
+  weights = ~Weight,
+  data = dt_Nation_select
+)
+
+design %>%
+  tbl_svysummary(
+    include = c(Notice_Disconnection,Disconnect,Physical_condition,Powerout,
+                Extremely_Cold,Extremely_Hot,Extreme_Hot_Cold,
+                Eco_dimension,Phy_dimension,Coping_dimension,EI_Overall,Health_Outcome),
+    type = all_categorical() ~ "categorical",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{p}%"
+    ),
+    missing = "no"   # <- this hides missing/unknown in the table
+  ) 
+
+
+#############################################################################
+#############################################################################
+# not useful #
+dt_table2 <- bind_rows(dt_recs_select, dt_Nation_select)
+dt_table2 <- dt_table2 %>%
+  mutate(across(where(is.character), toupper))
+
+design <- svydesign(
+  ids = ~1,
+  weights = ~Weight,
+  data = dt_table2
+)
+names(dt_table2)
+
+design %>%
+  tbl_svysummary(
+    include = c(Notice_Disconnection,Disconnect,Physical_condition,
+    Unhealthy_temp,Powerout,EI,Eco_dimension,Phy_dimension,Coping_dimension,EI_Overall),
+    by = Dataset,
+    type = all_dichotomous() ~ "categorical",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{p}%"
+    ),
+    missing = "no"   # <- this hides missing/unknown in the table
+  ) %>%
+  add_p() 
