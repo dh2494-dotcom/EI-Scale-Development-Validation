@@ -784,3 +784,206 @@ design %>%
     missing = "no"   # <- this hides missing/unknown in the table
   ) %>%
   add_p() 
+
+########################################
+# Title: Create New EI data from RECS
+# Date: "2026-07-6"
+# Author: Qian Li
+# Updated Date: "2026-07-6"
+#######################################
+
+library(dplyr)
+library(stringr)
+library(usmap)
+library(readr)
+library(tidyverse)
+library(gridExtra)
+library(patchwork)
+library(gtsummary)
+library(survey)
+
+setwd("C:/Users/ql2524/OneDrive - Columbia University Irving Medical Center/EI +Cancer")
+
+# Create New EI datasets #
+Energy <- read.csv( "Data/RECS/2024/recs2024_public_v1.csv")
+names(Energy)
+
+# Geography #
+Energy %>% tbl_summary(include = c(REGIONC,state_name,state_postal))
+dt1 = Energy %>% select(DOEID,REGIONC,state_name,state_postal,NWEIGHT)
+
+# Household Characteristics #
+# Energy %>% tbl_summary(include = c(HHSEX,HHAGE,HOUSEHOLDER_RACE,SDESCENT))
+Energy %>% tbl_summary(include = c(HHAGE_PUB)) #Age
+Energy %>% tbl_summary(include = c(HOUSEHOLDER_RACE,SDESCENT)) # Race, Ethnicity
+dt2 = Energy %>% select(DOEID,HHSEX,HHAGE,HOUSEHOLDER_RACE,SDESCENT)
+
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+
+
+# Your home #
+Energy %>% tbl_summary(include = c(TYPEHUQ,KOWNRENT))
+dt3 = Energy %>% select(DOEID,KOWNRENT)
+
+# Create energy insecurity #
+# SCALEE: receiving a disconnect or delivery stop notice
+# NOHEATEL: Unable to use heating equipment in the past year because could not afford electricity and it was disconnected
+# NOACEL: Unable to use air conditioning equipment in the past year because could not afford electricity and it was disconnected
+# POWEROUT: Any power outages for at least 24 hours in the past year
+# SCALEG: Frequency of keeping home at unhealthy temperature
+# SCALEB: Frequency of reducing or forgoing basic necessities due to home energy bill
+# ENERGYASST20: Received home energy assistance in 2020
+# NOHEATBROKE: Unable to use heating equipment in the past year because equipment was broken and could not afford repair or replacement
+# NOACBROKE: Unable to use air conditioning equipment in the past year because equipment was broken and could not afford repair or replacement
+# NOHEATNG: Unable to use heating equipment in the past year because could not afford natural gas and it was disconnected
+# NOHEATBULK: Unable to use heating equipment in the past year because could not afford bulk fuel delivery
+
+Energy %>% tbl_summary(include = c(SCALEE,NOHEATBROKE,NOACBROKE,NOHEATNG,NOHEATBULK,
+                                   SCALEG,SCALEB,NOHEATEL,NOACEL,POWEROUT,ENERGYASST20),
+                       type = list(all_categorical()~"categorical"))
+# Vector of EI variables without power outage #
+EI_vars_9 <- c("SCALEE","NOHEATEL","NOACEL","NOHEATNG","NOHEATBULK",
+             "SCALEG","NOHEATBROKE","NOACBROKE","SCALEB"
+)
+# Vector of EI variables #
+EI_vars_14 <- c("SCALEE","NOHEATEL","NOACEL","NOHEATNG","NOHEATBULK",
+             "SCALEG","NOHEATBROKE","NOACBROKE","SCALEB",
+             "NOHEATDAYS", "NOACDAYS", "POWEROUT", "NOACHELP", "ENERGYASST20")
+# Vector of EI variables #
+EI_vars_12 <- c("SCALEE","NOHEATEL","NOACEL","NOHEATNG","NOHEATBULK",
+                "SCALEG","NOHEATBROKE","NOACBROKE","SCALEB",
+                "NOHEATDAYS", "NOACDAYS", "POWEROUT")
+
+dt4 <- Energy %>%
+  mutate(
+     EI_any_9 = as.integer(rowSums(select(., all_of(EI_vars_9)) > 0) > 0),
+     EI_all_9 = rowSums(select(., all_of(EI_vars_9)) > 0)
+  ) %>%
+  mutate(
+    EI_any_12 = as.integer(rowSums(select(., all_of(EI_vars_12)) > 0) > 0),
+    EI_all_12 = rowSums(select(., all_of(EI_vars_12)) > 0)
+  ) %>%
+  select(DOEID,EI_any_9,EI_any_12,EI_all_9,EI_all_12)
+  
+dt4 %>% tbl_summary(include = c(EI_any_9,EI_all_9,EI_any_12,EI_all_12),
+                    type = list(all_categorical()~"categorical",
+                                EI_all_9~"categorical",
+                                EI_all_12~"categorical"))
+  
+# Merge data #
+dt <- list(dt1, dt2, dt3, dt4) %>%
+  reduce(full_join, by = "DOEID")
+
+# create state-level weighted data
+dt_state_all = dt %>% 
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+    ) %>%
+  ungroup() %>%
+  distinct()
+
+# create state-level females
+dt %>% tbl_summary(include = HHSEX)
+dt_state_female = dt %>% 
+  filter(HHSEX==1) %>%
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state_Female=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state_Female=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+
+# create state-level <65y
+dt_state_Young65 = dt %>% 
+  filter(HHAGE<65) %>%
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state_Young65=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state_Young65=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+
+# create state-level >=65y
+dt_state_Older65 = dt %>% 
+  filter(HHAGE>=65) %>%
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state_Older65=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state_Older65=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+
+# create state-level Hispanic
+dt_state_Hispanic = dt %>% 
+  filter(SDESCENT==1) %>%
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state_Hispanic=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state_Hispanic=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+
+# create state-level nonHispanic
+dt_state_nonHispanic = dt %>% 
+  filter(SDESCENT==0) %>%
+  select(state_name,state_postal,EI_any_9,EI_any_12,NWEIGHT) %>%
+  group_by(state_name) %>%
+  summarise(
+    EI_9_state_nonHispanic=weighted.mean(EI_any_9,NWEIGHT, na.rm = TRUE),
+    EI_12_state_nonHispanic=weighted.mean(EI_any_12,NWEIGHT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+  
+# create state-level name #
+dt_state_name = dt %>% 
+  select(state_name,state_postal) %>%
+  distinct()
+
+dt_state = list(dt_state_name,
+                dt_state_all,dt_state_female,dt_state_Young65,dt_state_Older65,
+                dt_state_Hispanic,dt_state_nonHispanic) %>%
+  reduce(full_join, by = "state_name")
+
+dt_state <- dt_state %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+
+write.csv(dt_state,"Data/RECS/EI_New_May12,2026.csv",row.names = F,na="")
+
+
+###########################################################################
+###########################################################################
+# create state-level outage and assistant: probably not very useful #
+dt_state_others <- Energy %>%
+  mutate(Energyasst_new=case_when(ENERGYASST20==1~1,
+                                  TRUE~0)) %>%
+  group_by(state_name) %>%
+  summarise(
+    Powerout_state=mean(POWEROUT, na.rm = TRUE),
+    Assistant_state=mean(Energyasst_new, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  distinct()
+
+
+
+
+
+
+
+
+
+
